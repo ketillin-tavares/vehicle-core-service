@@ -1,3 +1,4 @@
+import os
 import uuid
 from collections.abc import AsyncGenerator
 from decimal import Decimal
@@ -6,10 +7,15 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.application.ports import SalesSync
-from src.domain.entities import Vehicle, VehicleStatus
-from src.domain.repositories import VehicleRepository
-from src.main import app
+# DATABASE_PASSWORD e INTERNAL_API_TOKEN são obrigatórios em src.environment.Settings; precisam estar
+# definidos antes de qualquer import de src.main, que resolve as settings em tempo de import.
+os.environ.setdefault("DATABASE_PASSWORD", "vehicle_core_pass")
+os.environ.setdefault("INTERNAL_API_TOKEN", "internal-token")
+
+from src.application.ports import SalesSync  # noqa: E402
+from src.domain.entities import Vehicle, VehicleStatus  # noqa: E402
+from src.domain.repositories import VehicleRepository  # noqa: E402
+from src.main import app  # noqa: E402
 
 
 @pytest.fixture

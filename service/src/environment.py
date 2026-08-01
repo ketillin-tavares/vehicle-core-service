@@ -41,9 +41,9 @@ class DatabaseSettings(BaseSettings):
         description="Usuário de conexão com o PostgreSQL",
     )
     password: str = Field(
-        default="vehicle_core_pass",
+        ...,
         validation_alias="DATABASE_PASSWORD",
-        description="Senha de conexão com o PostgreSQL",
+        description="Senha de conexão com o PostgreSQL (obrigatória, sem default)",
     )
     name: str = Field(
         default="vehicle_core",
@@ -81,9 +81,9 @@ class SecuritySettings(BaseSettings):
     """Segredos compartilhados usados na comunicação entre serviços."""
 
     internal_api_token: str = Field(
-        default="internal-token",
+        ...,
         validation_alias="INTERNAL_API_TOKEN",
-        description="Token compartilhado exigido no header X-Internal-Token das rotas internas",
+        description="Token compartilhado exigido no header X-Internal-Token das rotas internas (obrigatório)",
     )
 
 

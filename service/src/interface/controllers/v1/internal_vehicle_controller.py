@@ -10,7 +10,7 @@ from src.interface.controllers.dependencies import verify_internal_token
 from src.interface.gateways import SQLAlchemyVehicleRepository
 from src.interface.presenters import NotFoundResponse, UnauthorizedResponse, VehicleStatusRequest
 
-router = APIRouter(prefix="/internal/v1/vehicles", tags=["internal"])
+router = APIRouter(prefix="/internal/v1/vehicles", tags=["internal"], include_in_schema=False)
 
 
 @router.patch(

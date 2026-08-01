@@ -32,6 +32,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """
     settings = get_settings()
     configure_logging(settings.app.log_level)
+    if settings.app.debug:
+        logger.warning(
+            "modo_debug_habilitado",
+            detalhe="DEBUG=true expõe o echo de SQL com valores sensíveis nos logs; não use em produção",
+        )
     await start_http_client(settings.sales_service.timeout_seconds)
     logger.info("service_iniciando", service_name=settings.app.service_name)
     yield

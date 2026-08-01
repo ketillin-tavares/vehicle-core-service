@@ -1,0 +1,66 @@
+name: vehicle-core
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: vehicle-core-postgres
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-vehicle_core_user}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-vehicle_core_pass}
+      POSTGRES_DB: ${DATABASE_NAME:-vehicle_core}
+    ports:
+      - "5432:5432"
+    volumes:
+      - vehicle_core_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-vehicle_core_user} -d ${DATABASE_NAME:-vehicle_core}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vehicle-core-network
+
+  migrations:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: vehicle-core-migrations
+    env_file: [.env]
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - vehicle-core-network
+
+  vehicle-core-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: vehicle-core-service
+    env_file: [.env]
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vehicle-core-network
+      - vehicle-platform
+
+networks:
+  vehicle-core-network:
+    driver: bridge
+  vehicle-platform:
+    external: true
+
+volumes:
+  vehicle_core_postgres_data:

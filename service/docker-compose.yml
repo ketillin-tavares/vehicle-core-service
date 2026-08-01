@@ -34,6 +34,20 @@ services:
     networks:
       - vehicle-core-network
 
+  seed:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    container_name: vehicle-core-seed
+    env_file: [.env]
+    command: ["python", "scripts/seed.py"]
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    networks:
+      - vehicle-core-network
+
   vehicle-core-service:
     build:
       context: .

@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from src.environment import (
     AppSettings,
@@ -61,11 +62,14 @@ class TestAppSettings:
 
 
 class TestDatabaseSettings:
-    """Tests for DatabaseSettings default values, overrides, and URL composition."""
+    """Tests for DatabaseSettings default values, required password, overrides, and URL composition."""
 
-    def test_default_values(self) -> None:
-        """Test that DatabaseSettings resolves to its documented defaults when no env vars are set."""
-        # Arrange / Act
+    def test_default_values_with_required_password_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that DatabaseSettings resolves to its documented defaults once DATABASE_PASSWORD is set."""
+        # Arrange
+        monkeypatch.setenv("DATABASE_PASSWORD", "vehicle_core_pass")
+
+        # Act
         settings = DatabaseSettings()
 
         # Assert
@@ -74,6 +78,12 @@ class TestDatabaseSettings:
         assert settings.user == "vehicle_core_user"
         assert settings.password == "vehicle_core_pass"
         assert settings.name == "vehicle_core"
+
+    def test_missing_password_raises_validation_error(self) -> None:
+        """Test that DatabaseSettings raises a ValidationError when DATABASE_PASSWORD is not set."""
+        # Arrange / Act / Assert
+        with pytest.raises(ValidationError):
+            DatabaseSettings()
 
     def test_override_via_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that DatabaseSettings picks up values from its aliased environment variables."""
@@ -94,9 +104,10 @@ class TestDatabaseSettings:
         assert settings.password == "custom_pass"
         assert settings.name == "custom_db"
 
-    def test_async_url_composition_with_defaults(self) -> None:
+    def test_async_url_composition_with_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that async_url composes the asyncpg connection string targeting the vehicle_core database."""
         # Arrange
+        monkeypatch.setenv("DATABASE_PASSWORD", "vehicle_core_pass")
         settings = DatabaseSettings()
 
         # Act
@@ -149,15 +160,13 @@ class TestSalesServiceSettings:
 
 
 class TestSecuritySettings:
-    """Tests for SecuritySettings default values and environment variable overrides."""
+    """Tests for SecuritySettings required token and environment variable overrides."""
 
-    def test_default_values(self) -> None:
-        """Test that SecuritySettings resolves to its documented defaults when no env vars are set."""
-        # Arrange / Act
-        settings = SecuritySettings()
-
-        # Assert
-        assert settings.internal_api_token == "internal-token"
+    def test_missing_token_raises_validation_error(self) -> None:
+        """Test that SecuritySettings raises a ValidationError when INTERNAL_API_TOKEN is not set."""
+        # Arrange / Act / Assert
+        with pytest.raises(ValidationError):
+            SecuritySettings()
 
     def test_override_via_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that SecuritySettings picks up values from its aliased environment variable."""
@@ -174,9 +183,13 @@ class TestSecuritySettings:
 class TestSettingsAndGetSettings:
     """Tests for the aggregate Settings model and the get_settings factory."""
 
-    def test_settings_aggregates_sub_settings(self) -> None:
+    def test_settings_aggregates_sub_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that Settings exposes app, database, sales_service and security sub-settings with their defaults."""
-        # Arrange / Act
+        # Arrange
+        monkeypatch.setenv("DATABASE_PASSWORD", "vehicle_core_pass")
+        monkeypatch.setenv("INTERNAL_API_TOKEN", "internal-token")
+
+        # Act
         settings = Settings()
 
         # Assert
@@ -186,11 +199,33 @@ class TestSettingsAndGetSettings:
         assert isinstance(settings.security, SecuritySettings)
         assert settings.database.name == "vehicle_core"
 
-    def test_get_settings_returns_settings_instance(self) -> None:
+    def test_get_settings_returns_settings_instance(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that get_settings returns a fully resolved Settings instance."""
-        # Arrange / Act
+        # Arrange
+        monkeypatch.setenv("DATABASE_PASSWORD", "vehicle_core_pass")
+        monkeypatch.setenv("INTERNAL_API_TOKEN", "internal-token")
+
+        # Act
         settings = get_settings()
 
         # Assert
         assert isinstance(settings, Settings)
         assert settings.app.service_name == "vehicle-core-service"
+
+    def test_missing_database_password_raises_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that building Settings without DATABASE_PASSWORD raises a ValidationError."""
+        # Arrange
+        monkeypatch.setenv("INTERNAL_API_TOKEN", "internal-token")
+
+        # Act / Assert
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_missing_internal_api_token_raises_validation_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that Settings raises a ValidationError without INTERNAL_API_TOKEN, once DATABASE_PASSWORD is set."""
+        # Arrange
+        monkeypatch.setenv("DATABASE_PASSWORD", "vehicle_core_pass")
+
+        # Act / Assert
+        with pytest.raises(ValidationError):
+            Settings()

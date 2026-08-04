@@ -316,6 +316,35 @@ chamou**, mesmo que esses recursos não existam no código Terraform. Caso concr
   quem aplica a tag `aws:secretsmanager:owningService`.
 - Referência: [Password management with Amazon RDS and AWS Secrets Manager](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html#rds-secrets-manager-permissions).
 
+### Escalada de privilégio via `iam:AttachRolePolicy` (fechada)
+
+Cadeia de exploração que existia na policy e foi eliminada: `iam:CreateRole` em
+`role/vehicle-core-service-*` → `iam:AttachRolePolicy` **sem condição de `iam:PolicyARN`** (ou seja,
+`arn:aws:iam::aws:policy/AdministratorAccess` era permitido) → `CreateInstanceProfile` +
+`AddRoleToInstanceProfile` → `iam:PassRole` para `ec2.amazonaws.com` + `ec2:RunInstances` → o IMDS
+da instância entrega credenciais de Administrator. Comprometimento total da conta a partir de um run
+da TFC.
+
+Correção: `iam:AttachRolePolicy` / `iam:DetachRolePolicy` saíram de `IamManageServiceRoles` para o
+statement próprio `IamAttachSsmManagedPolicyOnly`, condicionado por
+`ArnEquals { "iam:PolicyARN": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" }` — a única
+managed policy que a stack realmente anexa (`infra/stack/main.tf`, `aws_iam_role_policy_attachment.instance_ssm`).
+
+> ⚠️ **Restrição criada por essa condição — leia antes de mexer em IAM na stack.** Se qualquer `.tf`
+> futuro anexar uma managed policy **diferente**, o apply vai falhar com `AccessDenied` em
+> `iam:AttachRolePolicy`. É exatamente o comportamento desejado (a condição existe para isso), mas
+> significa que **anexar uma nova managed policy exige estender o array de `iam:PolicyARN` neste
+> statement e re-colar o JSON na AWS**. Policies *inline* (`aws_iam_role_policy`) não passam por
+> essa condição e continuam funcionando sem alteração.
+
+Limitação conhecida e aceita: `iam:PutRolePolicy` continua sem condição sobre
+`role/vehicle-core-service-*` — a stack precisa dele para as policies inline
+(`instance_db_secret`, `instance_ecr_pull`, `deploy`) e o IAM **não oferece chave de condição sobre
+o conteúdo do documento inline**. Portanto a mesma escalada ainda é teoricamente alcançável por
+`PutRolePolicy` + `PassRole` + `RunInstances`. O que a correção acima elimina é o caminho trivial de
+um clique; o risco residual é inerente a dar permissão de IAM a uma run role de Terraform e só seria
+removível tirando a criação de roles do escopo do Terraform.
+
 ### Condições por tag (ABAC) nunca guardam ações do mesmo run que cria o recurso
 
 A autorização por tag no KMS não é imediata —

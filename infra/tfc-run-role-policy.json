@@ -134,12 +134,24 @@
         "iam:GetRolePolicy",
         "iam:DeleteRolePolicy",
         "iam:ListRolePolicies",
-        "iam:AttachRolePolicy",
-        "iam:DetachRolePolicy",
         "iam:ListAttachedRolePolicies",
         "iam:ListInstanceProfilesForRole"
       ],
       "Resource": "arn:aws:iam::*:role/vehicle-core-service-*"
+    },
+    {
+      "Sid": "IamAttachSsmManagedPolicyOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/vehicle-core-service-*",
+      "Condition": {
+        "ArnEquals": {
+          "iam:PolicyARN": "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+        }
+      }
     },
     {
       "Sid": "IamPassInstanceRoleToEc2",

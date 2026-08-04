@@ -180,6 +180,9 @@ export TF_WORKSPACE=vehicle-core-infra
    > → *Edit* → JSON → *Save*; ou repita o `aws iam put-role-policy` acima). Depois disso, rode o
    > `infra.yml` novamente. Sintoma típico de policy desatualizada: `AccessDenied` ou
    > `KMSKeyNotAccessibleFault` no apply.
+   > Leia também
+   > [A TFC run role e o ponto cego da validação local](#a-tfc-run-role-e-o-ponto-cego-da-validação-local)
+   > — por que o Floci nunca pega esses erros e o que revisar a cada mudança na stack.
 
 4. Variáveis do workspace na TFC:
    - Ambiente: `TFC_AWS_PROVIDER_AUTH=true` e
@@ -248,6 +251,75 @@ terraform apply -auto-approve -input=false
 Ou disparando o workflow **Infra** (`workflow_dispatch`) no GitHub Actions — protegido pelo
 ambiente `infra` (requer revisores aprovadores configurados em *Settings > Environments*) e, para
 `destroy`, pela confirmação explícita do input `confirm = vehicle-core-service`.
+
+## A TFC run role e o ponto cego da validação local
+
+> # ⚠️ RE-COLE A POLICY NA AWS APÓS **TODA** MUDANÇA EM `tfc-run-role-policy.json`
+>
+> A inline policy da role `vehicle-core-infra-tfc` **não acompanha o git**. O arquivo versionado
+> só chega à AWS quando você o cola de novo:
+>
+> ```bash
+> cd infra
+> aws iam put-role-policy --role-name vehicle-core-infra-tfc \
+>   --policy-name vehicle-core-infra-tfc-policy \
+>   --policy-document file://tfc-run-role-policy.json
+> ```
+>
+> Ou no console: IAM → *Roles* → `vehicle-core-infra-tfc` → *Permissions* → policy inline →
+> *Edit* → JSON → *Save*. Só depois rode o `infra.yml` de novo. **Sintoma clássico de policy
+> desatualizada: `AccessDenied` ou `KMSKeyNotAccessibleFault` no apply.**
+
+### O Floci não valida autorização IAM
+
+O emulador aceita **qualquer** credencial e autoriza **toda** chamada — ele não implementa o motor
+de autorização do IAM. Consequência prática: falhas de `AccessDenied` são **estruturalmente
+invisíveis** na validação local. Um `floci-validate.sh` verde prova apenas que o grafo de recursos
+e o formato dos argumentos estão corretos; **não prova absolutamente nada sobre permissões**. O
+único teste real da run role é um `apply`/`destroy` contra a AWS de verdade.
+
+### Regra para toda mudança em `infra/stack/`
+
+Todo recurso ou argumento novo adicionado a `infra/stack/` exige uma **revisão casada** de
+`infra/tfc-run-role-policy.json`. A policy é de menor privilégio escrita à mão e **não falha no
+`plan`** — o `terraform plan` não consulta o IAM, então a lacuna de permissão só aparece no meio do
+`apply`, com recursos parcialmente criados.
+
+### Cuidado com permissões exigidas do *chamador* para efeitos colaterais do serviço
+
+Alguns serviços da AWS executam ações em recursos de outros serviços **usando as permissões de quem
+chamou**, mesmo que esses recursos não existam no código Terraform. Caso concreto deste projeto:
+
+- `manage_master_user_password = true` em `aws_db_instance.app` faz o **RDS criar um segredo no
+  Secrets Manager em nome do principal chamador**. Por isso a run role precisa de
+  `secretsmanager:CreateSecret`, `secretsmanager:TagResource` (criar/modificar/restaurar) e
+  `secretsmanager:RotateSecret` (modificar/rotacionar) — **mesmo não existindo nenhum recurso
+  `aws_secretsmanager_secret` na stack**. Sem isso o apply falha com
+  `RDS CreateDBInstance ... AccessDenied: The user isn't authorized to create a secret in AWS
+  Secrets Manager`.
+- O statement `RdsManagedMasterSecret` cobre o ciclo de vida completo do segredo e usa o recurso
+  `arn:aws:secretsmanager:*:*:secret:rds!*` — exatamente o padrão documentado pela AWS. O prefixo
+  `rds!` é **reservado a segredos criados pelo RDS**, então o escopo continua mínimo. Sem
+  `Condition` por tag de recurso: no `CreateSecret` o recurso ainda não existe e é o próprio RDS
+  quem aplica a tag `aws:secretsmanager:owningService`.
+- Referência: [Password management with Amazon RDS and AWS Secrets Manager](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html#rds-secrets-manager-permissions).
+
+### O caminho de `destroy` nunca foi exercitado contra a AWS real
+
+As ações abaixo existem na policy, mas **permanecem não verificadas até o primeiro destroy real**:
+
+| Recurso | Ações de destruição na policy |
+|---|---|
+| RDS | `rds:DeleteDBInstance`, `rds:DeleteDBSubnetGroup` |
+| EC2 / EIP / SG | `ec2:TerminateInstances`, `ec2:ReleaseAddress`, `ec2:DisassociateAddress`, `ec2:DeleteSecurityGroup` |
+| KMS | `kms:ScheduleKeyDeletion`, `kms:DeleteAlias` |
+| IAM | `iam:DeleteRole`, `iam:DeleteRolePolicy`, `iam:DeleteInstanceProfile`, `iam:DeleteOpenIDConnectProvider` |
+| ECR | `ecr:DeleteRepository` + `ecr:BatchDeleteImage` (`force_delete = true`) |
+| SSM | `ssm:DeleteParameter` |
+| Secrets Manager | `secretsmanager:DeleteSecret` (segredo master do RDS) |
+
+Ao rodar o primeiro `destroy`, trate qualquer `AccessDenied` como lacuna da policy — não como bug
+do Terraform — e siga o mesmo procedimento: corrigir o JSON, **re-colar na AWS**, repetir.
 
 ## Variáveis de ambiente e segredos
 

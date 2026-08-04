@@ -87,14 +87,18 @@
       "Resource": "arn:aws:rds:*:*:subgrp:vehicle-core-service-db"
     },
     {
-      "Sid": "RdsManagedMasterSecretRead",
+      "Sid": "RdsManagedMasterSecret",
       "Effect": "Allow",
       "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:UntagResource",
+        "secretsmanager:RotateSecret",
         "secretsmanager:DescribeSecret",
         "secretsmanager:GetResourcePolicy",
-        "secretsmanager:TagResource"
+        "secretsmanager:DeleteSecret"
       ],
-      "Resource": "arn:aws:secretsmanager:*:*:secret:rds!db-*"
+      "Resource": "arn:aws:secretsmanager:*:*:secret:rds!*"
     },
     {
       "Sid": "EcrManageAppRepo",

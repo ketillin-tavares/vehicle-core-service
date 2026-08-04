@@ -45,3 +45,52 @@ resource "aws_kms_alias" "ssm" {
   name          = "alias/${local.service_name}-ssm"
   target_key_id = aws_kms_key.ssm.key_id
 }
+
+# --- KMS CMK for RDS (storage + managed master-user secret) ---------------
+#
+# aws_db_instance.app points at this key EXPLICITLY (kms_key_id and
+# master_user_secret_kms_key_id): with no explicit key, RDS falls back to
+# the AWS-managed aws/rds and aws/secretsmanager keys, which the
+# least-privilege TFC run role cannot touch (all its KMS actions are scoped
+# to service-tagged keys) — real-AWS apply failed with
+# KMSKeyNotAccessibleFault. Cost: USD 1/mo.
+
+resource "aws_kms_key" "rds" {
+  description         = "${local.service_name}: encrypts RDS storage and the managed master-user secret"
+  enable_key_rotation = true
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # Root delegation: key administration and service usage authorized
+        # through normal IAM policies (TFC run role holds the tag-scoped
+        # kms actions, incl. CreateGrant for the RDS service grant).
+        Sid       = "AccountRootAdmin"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        # deploy.sh on the instance: secretsmanager get-secret-value for
+        # DATABASE_PASSWORD. Decrypt only, only through Secrets Manager.
+        Sid       = "InstanceRoleDecryptViaSecretsManager"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.instance.arn }
+        Action    = "kms:Decrypt"
+        Resource  = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "secretsmanager.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_kms_alias" "rds" {
+  name          = "alias/${local.service_name}-rds"
+  target_key_id = aws_kms_key.rds.key_id
+}

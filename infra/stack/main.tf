@@ -1,0 +1,123 @@
+# --- Networking (default VPC — cost/simplicity, see ADR-0001) ------------
+
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+# --- AMI ------------------------------------------------------------------
+
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+
+  filter {
+    name   = "state"
+    values = ["available"]
+  }
+}
+
+# --- Security group -------------------------------------------------------
+
+resource "aws_security_group" "app" {
+  name        = "${local.service_name}-sg"
+  description = "vehicle-core-service: app port only, no SSH (access via SSM)"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "Application HTTP"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# --- IAM instance profile (SSM managed instance, no SSH keys) -------------
+
+resource "aws_iam_role" "instance" {
+  name = "${local.service_name}-instance-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+        Action    = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "instance_ssm" {
+  role       = aws_iam_role.instance.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "instance" {
+  name = "${local.service_name}-instance-profile"
+  role = aws_iam_role.instance.name
+}
+
+# --- EC2 instance ---------------------------------------------------------
+
+resource "aws_instance" "app" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = var.instance_type
+  subnet_id              = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.app.id]
+  iam_instance_profile   = aws_iam_instance_profile.instance.name
+
+  user_data = file("${path.module}/user_data.sh")
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required" # IMDSv2 only
+    http_put_response_hop_limit = 1
+  }
+
+  root_block_device {
+    encrypted   = true
+    volume_type = "gp3"
+    volume_size = 16
+  }
+
+  tags = {
+    Name = local.service_name
+  }
+}
+
+# --- Elastic IP (stable endpoint) -----------------------------------------
+
+resource "aws_eip" "app" {
+  domain = "vpc"
+
+  tags = {
+    Name = local.service_name
+  }
+}
+
+resource "aws_eip_association" "app" {
+  instance_id   = aws_instance.app.id
+  allocation_id = aws_eip.app.id
+}

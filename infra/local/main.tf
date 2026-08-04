@@ -1,0 +1,19 @@
+# LOCAL TEST root — same stack pointed at the Floci emulator
+# (floci/floci:latest, port 4566). Local backend, dummy credentials,
+# throwaway state. Run through ./floci-validate.sh, never against real AWS.
+terraform {
+  required_version = ">= 1.6.0"
+}
+
+module "stack" {
+  source = "../stack"
+
+  aws_region       = "us-east-1"
+  github_org       = "floci-local"
+  aws_endpoint_url = "http://localhost:4566"
+
+  # Floci gap: CreateOpenIDConnectProvider is not supported — skip the OIDC
+  # provider + deploy role locally. Production (infra/main) keeps the default
+  # (true); the stack itself is otherwise UNMODIFIED between environments.
+  create_github_oidc = false
+}

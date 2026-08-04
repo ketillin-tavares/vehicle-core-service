@@ -1,0 +1,49 @@
+# Production compose for the EC2 instance — SELF-CONTAINED on purpose:
+# the instance has no repo checkout, so services run from a pre-built image
+# (APP_IMAGE, e.g. <account>.dkr.ecr.<region>.amazonaws.com/vehicle-core-service:<sha>)
+# instead of the `build:` contexts used by service/docker-compose.yml for
+# local dev.
+#
+# Differences from local dev (by design):
+# - NO postgres service — the database is RDS (DATABASE_* in .env points
+#   at it; security item 3 is moot: nothing listens on 5432 on the host).
+# - NO seed service — seed is local-dev-only, it NEVER runs in production.
+#
+# Interpolated values come from /opt/vehicle-core-service/.env materialized
+# by deploy.sh from SSM Parameter Store + Secrets Manager, plus APP_IMAGE
+# exported by deploy.sh.
+name: vehicle-core
+
+services:
+  migrations:
+    image: ${APP_IMAGE}
+    container_name: vehicle-core-migrations
+    env_file: [.env]
+    command: ["alembic", "upgrade", "head"]
+    networks:
+      - vehicle-core-network
+
+  vehicle-core-service:
+    image: ${APP_IMAGE}
+    container_name: vehicle-core-service
+    env_file: [.env]
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - vehicle-core-network
+      - vehicle-platform
+
+networks:
+  vehicle-core-network:
+    driver: bridge
+  vehicle-platform:
+    external: true

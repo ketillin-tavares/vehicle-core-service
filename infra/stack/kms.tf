@@ -10,6 +10,10 @@ resource "aws_kms_key" "ssm" {
   description         = "${local.service_name}: encrypts the service's SSM SecureString parameters"
   enable_key_rotation = true
 
+  # Explicit tags: the TFC run role's KMS permissions are ABAC-conditioned
+  # on Service=vehicle-core-service — do NOT rely on default_tags here.
+  tags = local.standard_tags
+
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -58,6 +62,10 @@ resource "aws_kms_alias" "ssm" {
 resource "aws_kms_key" "rds" {
   description         = "${local.service_name}: encrypts RDS storage and the managed master-user secret"
   enable_key_rotation = true
+
+  # Explicit tags: the TFC run role's KMS permissions are ABAC-conditioned
+  # on Service=vehicle-core-service — do NOT rely on default_tags here.
+  tags = local.standard_tags
 
   policy = jsonencode({
     Version = "2012-10-17"

@@ -29,11 +29,16 @@ resource "aws_db_instance" "app" {
   allocated_storage = 20
   storage_type      = "gp3"
   storage_encrypted = true
+  # Explicit CMK: the AWS-managed aws/rds default is NOT accessible to the
+  # least-privilege TFC run role (KMS actions scoped to service-tagged keys).
+  kms_key_id = aws_kms_key.rds.arn
 
   db_name  = "vehicle_core"
   username = "vehicle_core_user"
   # Master password managed by RDS in Secrets Manager — never in TF state.
-  manage_master_user_password = true
+  # Same explicit CMK (default would be the aws/secretsmanager managed key).
+  manage_master_user_password   = true
+  master_user_secret_kms_key_id = aws_kms_key.rds.arn
 
   db_subnet_group_name   = aws_db_subnet_group.app.name
   vpc_security_group_ids = [aws_security_group.db.id]

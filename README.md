@@ -1,5 +1,8 @@
 # Vehicle Core Service
 
+[![pre-commit](https://img.shields.io/badge/pre--commit-enabled-brightgreen?logo=pre-commit)](https://github.com/pre-commit/pre-commit)
+[![Quality gate](https://sonarcloud.io/api/project_badges/quality_gate?project=ketillin-tavares_vehicle-core-service)](https://sonarcloud.io/summary/new_code?id=ketillin-tavares_vehicle-core-service)
+
 Serviço principal da plataforma de revenda de veículos: cadastro e edição do catálogo (marca,
 modelo, ano, cor, preço). É a **fonte da verdade** dos dados cadastrais e possui banco de dados
 próprio (`vehicle_core`), isolado do banco do `vehicle-sales-service`. Os dois serviços trocam

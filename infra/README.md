@@ -48,11 +48,18 @@ local em [`infra/local/README.md`](./local/README.md).
   `repo:<org>/vehicle-core-service:ref:refs/heads/main` (`aud`/`sub` exatos, sem wildcard);
   política permite `ssm:SendCommand` (documento `AWS-RunShellScript`, instância filtrada por tag),
   `ssm:GetCommandInvocation`, `ec2:DescribeInstances` e autenticação/push no único repositório ECR.
-- **KMS CMK** `alias/vehicle-core-service-ssm` (rotação habilitada): cifra os parâmetros
-  `SecureString` do SSM deste serviço em vez da chave padrão da conta (`alias/aws/ssm`). A política
-  da chave concede `kms:Decrypt` apenas à role da instância (via SSM, na região) + delegação de
-  administração para a conta root. A decriptação é transparente para o `deploy.sh`
-  (`--with-decryption` sem alteração).
+- **KMS CMKs dedicadas** (rotação habilitada, ~US$ 1/mês cada):
+  - `alias/vehicle-core-service-ssm`: cifra os parâmetros `SecureString` do SSM deste serviço em
+    vez da chave padrão da conta (`alias/aws/ssm`). A política da chave concede `kms:Decrypt`
+    apenas à role da instância (via SSM, na região) + delegação de administração para a conta
+    root. A decriptação é transparente para o `deploy.sh` (`--with-decryption` sem alteração).
+  - `alias/vehicle-core-service-rds`: cifra o storage do RDS **e** o segredo da senha master no
+    Secrets Manager, referenciada explicitamente (`kms_key_id` /
+    `master_user_secret_kms_key_id`). Sem chave explícita o RDS usaria as chaves gerenciadas
+    `aws/rds` e `aws/secretsmanager`, inacessíveis à TFC run role de menor privilégio (todas as
+    ações KMS dela são restritas a chaves com a tag `Service`) — o apply real falhava com
+    `KMSKeyNotAccessibleFault`. A role da instância recebe `kms:Decrypt` via Secrets Manager para
+    o `deploy.sh` ler a senha.
 - **Parâmetros SSM** sob `/vehicle-core-service/*`:
   - `SecureString` com valores placeholder (definidos fora do Terraform, com `ignore_changes`),
     cifrados com o CMK dedicado: `SALES_SERVICE_BASE_URL`, `SALES_SERVICE_TIMEOUT_SECONDS`,
@@ -62,8 +69,8 @@ local em [`infra/local/README.md`](./local/README.md).
     `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_NAME`, `DATABASE_PASSWORD_SECRET_ARN`.
 
 Custo estimado: EC2 `t3.micro` (~US$ 8/mês) + RDS `db.t4g.micro` (~US$ 12/mês) + 36 GB `gp3`
-(~US$ 4/mês) + KMS CMK (~US$ 1/mês); ECR/SSM/Secrets via RDS ~US$ 0. Ambas as instâncias são
-elegíveis ao free tier em contas novas (depois disso, ~US$ 5/mês só de storage + KMS).
+(~US$ 4/mês) + 2 KMS CMKs (~US$ 2/mês); ECR/SSM/Secrets via RDS ~US$ 0. Ambas as instâncias são
+elegíveis ao free tier em contas novas (depois disso, ~US$ 6/mês só de storage + KMS).
 
 ## Configuração do backend (Terraform Cloud / HCP Terraform)
 
@@ -145,8 +152,13 @@ export TF_WORKSPACE=vehicle-core-infra
      restringíveis por nome usam `Resource: "*"`, mas fixadas em
      `aws:RequestedRegion = us-east-1` (edite o JSON se mudar `aws_region`);
      `ec2:TerminateInstances`/`ec2:StopInstances` exigem também a tag `Service =
-     vehicle-core-service`; o gerenciamento da chave KMS exige a mesma tag (aplicada na criação via
-     `default_tags` do provider).
+     vehicle-core-service`; o gerenciamento das chaves KMS exige a mesma tag (aplicada na criação
+     via `default_tags` do provider).
+
+   > **Atualizou `tfc-run-role-policy.json` depois de criar a role?** A inline policy da role
+   > **não** se atualiza sozinha: cole o JSON novo por cima (console: role → *Permissions* →
+   > policy inline → *Edit*; CLI: repita o `aws iam put-role-policy` acima) e rode o `infra.yml`
+   > de novo.
 
 4. Variáveis do workspace na TFC:
    - Ambiente: `TFC_AWS_PROVIDER_AUTH=true` e

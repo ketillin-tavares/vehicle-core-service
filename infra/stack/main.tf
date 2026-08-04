@@ -102,9 +102,12 @@ resource "aws_instance" "app" {
     volume_size = 16
   }
 
-  tags = {
+  # Explicit tags: two IAM conditions target this instance's Service tag
+  # (deploy role ssm:SendCommand, TFC run role Terminate/Stop) — do NOT
+  # rely on default_tags propagation.
+  tags = merge(local.standard_tags, {
     Name = local.service_name
-  }
+  })
 }
 
 # --- Elastic IP (stable endpoint) -----------------------------------------

@@ -60,6 +60,25 @@ local em [`infra/local/README.md`](./local/README.md).
     ações KMS dela são restritas a chaves com a tag `Service`) — o apply real falhava com
     `KMSKeyNotAccessibleFault`. A role da instância recebe `kms:Decrypt` via Secrets Manager para
     o `deploy.sh` ler a senha.
+
+  Ambas as chaves recebem `tags` **explícitas** (não apenas via `default_tags`), porque as
+  permissões KMS da run role são condicionadas por tag.
+
+  > **Por que as ações de *uso* do KMS são condicionadas por `kms:ViaService`, e não por tag.**
+  > A autorização por tag (ABAC) no KMS não é imediata: mudanças em tags e aliases
+  > [podem levar até 5 minutos para afetar a autorização](https://docs.aws.amazon.com/kms/latest/developerguide/troubleshooting-tags-aliases.html).
+  > No mesmo apply, o Terraform cria a chave e segundos depois o RDS chama `DescribeKey` sobre
+  > ela em nome da run role — a tag ainda não vale para autorização e o apply falha com
+  > `KMSKeyNotAccessibleFault` (confirmado via CloudTrail: `DescribeKey` negado com
+  > `sourceIPAddress: rds.amazonaws.com`). Por isso as ações de uso (`DescribeKey`,
+  > `CreateGrant`, `GenerateDataKey*`, `Encrypt`, `Decrypt`, `ReEncrypt*`) ficam num statement
+  > condicionado por `kms:ViaService` — avaliado a partir do contexto da requisição, não do
+  > estado das tags, portanto **efetivo imediatamente e imune ao atraso de propagação**. Continua
+  > sendo menor privilégio: só vale para chamadas roteadas por RDS, Secrets Manager ou SSM na
+  > região, nunca para uso direto da chave por um humano ou outro principal. As ações de
+  > *gerenciamento* (`PutKeyPolicy`, `EnableKeyRotation`, `ScheduleKeyDeletion`, tags, aliases)
+  > seguem condicionadas por tag — são chamadas diretamente pelo Terraform, sem a corrida de
+  > mesmo segundo.
 - **Parâmetros SSM** sob `/vehicle-core-service/*`:
   - `SecureString` com valores placeholder (definidos fora do Terraform, com `ignore_changes`),
     cifrados com o CMK dedicado: `SALES_SERVICE_BASE_URL`, `SALES_SERVICE_TIMEOUT_SECONDS`,
@@ -155,10 +174,12 @@ export TF_WORKSPACE=vehicle-core-infra
      vehicle-core-service`; o gerenciamento das chaves KMS exige a mesma tag (aplicada na criação
      via `default_tags` do provider).
 
-   > **Atualizou `tfc-run-role-policy.json` depois de criar a role?** A inline policy da role
-   > **não** se atualiza sozinha: cole o JSON novo por cima (console: role → *Permissions* →
-   > policy inline → *Edit*; CLI: repita o `aws iam put-role-policy` acima) e rode o `infra.yml`
-   > de novo.
+   > ⚠️ **Toda vez que `tfc-run-role-policy.json` mudar no repositório, re-cole o JSON na role.**
+   > A inline policy da role **não** acompanha o git: o conteúdo do arquivo só chega à AWS quando
+   > você o cola de novo (console: role `vehicle-core-infra-tfc` → *Permissions* → policy inline
+   > → *Edit* → JSON → *Save*; ou repita o `aws iam put-role-policy` acima). Depois disso, rode o
+   > `infra.yml` novamente. Sintoma típico de policy desatualizada: `AccessDenied` ou
+   > `KMSKeyNotAccessibleFault` no apply.
 
 4. Variáveis do workspace na TFC:
    - Ambiente: `TFC_AWS_PROVIDER_AUTH=true` e

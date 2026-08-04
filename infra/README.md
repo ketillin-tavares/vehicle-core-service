@@ -74,11 +74,23 @@ local em [`infra/local/README.md`](./local/README.md).
   > `CreateGrant`, `GenerateDataKey*`, `Encrypt`, `Decrypt`, `ReEncrypt*`) ficam num statement
   > condicionado por `kms:ViaService` — avaliado a partir do contexto da requisição, não do
   > estado das tags, portanto **efetivo imediatamente e imune ao atraso de propagação**. Continua
-  > sendo menor privilégio: só vale para chamadas roteadas por RDS, Secrets Manager ou SSM na
-  > região, nunca para uso direto da chave por um humano ou outro principal. As ações de
-  > *gerenciamento* (`PutKeyPolicy`, `EnableKeyRotation`, `ScheduleKeyDeletion`, tags, aliases)
-  > seguem condicionadas por tag — são chamadas diretamente pelo Terraform, sem a corrida de
-  > mesmo segundo.
+  > sendo menor privilégio: só vale para chamadas roteadas por EC2/EBS, RDS, Secrets Manager ou
+  > SSM na região, nunca para uso direto da chave por um humano ou outro principal.
+  >
+  > **A mesma corrida existe nas chamadas diretas do Terraform logo após o `CreateKey`.** Com
+  > `enable_key_rotation = true`, o provider chama `EnableKeyRotation` — e lê a chave com
+  > `DescribeKey`, `GetKeyPolicy`, `GetKeyRotationStatus`, `ListResourceTags` — **segundos**
+  > depois de criá-la. Essas cinco ações ficam no statement `KmsBootstrapAndReadKeys`,
+  > condicionado apenas por `aws:RequestedRegion` (contexto da requisição, sem tag): são leituras
+  > mais um único toggle de configuração **não destrutivo**, que rodam antes de a autorização por
+  > tag propagar. O statement `KmsManageServiceKey` continua condicionado por tag e guarda apenas
+  > o que é destrutivo ou altera acesso: `PutKeyPolicy`, `DisableKeyRotation`, `UntagResource`,
+  > `ScheduleKeyDeletion`, `CancelKeyDeletion`, `Encrypt`, `Decrypt`, `GenerateDataKey`.
+  >
+  > **Regra geral, válida para qualquer permissão futura:** uma permissão KMS condicionada por tag
+  > **nunca** pode guardar uma ação que roda no mesmo run do Terraform que cria a chave. Nesses
+  > casos use condições de contexto da requisição (`aws:RequestedRegion`, `kms:ViaService`), que
+  > são avaliadas na hora e não dependem de propagação de tags.
 - **Parâmetros SSM** sob `/vehicle-core-service/*`:
   - `SecureString` com valores placeholder (definidos fora do Terraform, com `ignore_changes`),
     cifrados com o CMK dedicado: `SALES_SERVICE_BASE_URL`, `SALES_SERVICE_TIMEOUT_SECONDS`,
@@ -303,6 +315,28 @@ chamou**, mesmo que esses recursos não existam no código Terraform. Caso concr
   `Condition` por tag de recurso: no `CreateSecret` o recurso ainda não existe e é o próprio RDS
   quem aplica a tag `aws:secretsmanager:owningService`.
 - Referência: [Password management with Amazon RDS and AWS Secrets Manager](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html#rds-secrets-manager-permissions).
+
+### Condições por tag (ABAC) nunca guardam ações do mesmo run que cria o recurso
+
+A autorização por tag no KMS não é imediata —
+[mudanças em tags e aliases podem levar até 5 minutos para afetar a autorização](https://docs.aws.amazon.com/kms/latest/developerguide/troubleshooting-tags-aliases.html).
+Este projeto já foi mordido por isso **duas vezes**, com a mesma causa raiz:
+
+1. O RDS chamando `DescribeKey` sobre a CMK recém-criada em nome da run role →
+   `KMSKeyNotAccessibleFault`. Resolvido movendo as ações de *uso* para um statement condicionado
+   por `kms:ViaService`.
+2. O provider chamando `EnableKeyRotation` (e os `Get*`/`Describe*` de leitura) segundos depois do
+   `CreateKey`. Resolvido movendo essas cinco ações para `KmsBootstrapAndReadKeys`, condicionado
+   apenas por `aws:RequestedRegion`.
+
+> **Regra:** uma permissão KMS condicionada por tag **nunca** pode guardar uma ação executada no
+> mesmo run do Terraform que cria a chave. Use condições de contexto da requisição
+> (`aws:RequestedRegion`, `kms:ViaService`) nesses casos — elas são avaliadas na hora, sem depender
+> de propagação. Reserve a condição por tag para o que é destrutivo ou altera acesso
+> (`PutKeyPolicy`, `ScheduleKeyDeletion`, `UntagResource`, `Disable*`, uso direto da chave).
+
+O detalhamento completo está no callout da seção
+[Recursos provisionados](#recursos-provisionados-módulo-stack).
 
 ### O caminho de `destroy` nunca foi exercitado contra a AWS real
 

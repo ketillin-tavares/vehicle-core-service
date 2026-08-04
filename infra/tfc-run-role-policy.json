@@ -205,15 +205,27 @@
       }
     },
     {
-      "Sid": "KmsManageServiceKey",
+      "Sid": "KmsBootstrapAndReadKeys",
       "Effect": "Allow",
       "Action": [
         "kms:DescribeKey",
         "kms:GetKeyPolicy",
         "kms:GetKeyRotationStatus",
         "kms:ListResourceTags",
+        "kms:EnableKeyRotation"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:*:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    },
+    {
+      "Sid": "KmsManageServiceKey",
+      "Effect": "Allow",
+      "Action": [
         "kms:PutKeyPolicy",
-        "kms:EnableKeyRotation",
         "kms:DisableKeyRotation",
         "kms:UntagResource",
         "kms:ScheduleKeyDeletion",
@@ -248,6 +260,7 @@
       "Condition": {
         "StringEquals": {
           "kms:ViaService": [
+            "ec2.us-east-1.amazonaws.com",
             "rds.us-east-1.amazonaws.com",
             "secretsmanager.us-east-1.amazonaws.com",
             "ssm.us-east-1.amazonaws.com"

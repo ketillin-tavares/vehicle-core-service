@@ -9,9 +9,10 @@
 #   at it; security item 3 is moot: nothing listens on 5432 on the host).
 # - NO seed service — seed is local-dev-only, it NEVER runs in production.
 #
-# Interpolated values come from /opt/vehicle-core-service/.env materialized
-# by deploy.sh from SSM Parameter Store + Secrets Manager, plus APP_IMAGE
-# exported by deploy.sh.
+# Non-secret config comes from /opt/vehicle-core-service/.env materialized by
+# deploy.sh from SSM Parameter Store, plus APP_IMAGE exported by deploy.sh.
+# The two secrets (DATABASE_PASSWORD, INTERNAL_API_TOKEN) are NOT in .env —
+# they are passed through from deploy.sh's environment, see `environment:`.
 name: vehicle-core
 
 services:
@@ -19,6 +20,14 @@ services:
     image: ${APP_IMAGE}
     container_name: vehicle-core-migrations
     env_file: [.env]
+    # Pass-through (valueless) form: the value is copied VERBATIM from the
+    # deploy.sh shell environment. These two are NOT in .env on purpose —
+    # Compose interpolates env_file values, so a `$` or `{` in the
+    # RDS-generated password would be silently truncated or fail the whole
+    # deploy with `Invalid template`. alembic needs the password; it has no
+    # use for INTERNAL_API_TOKEN, so it does not get it.
+    environment:
+      - DATABASE_PASSWORD
     command: ["alembic", "upgrade", "head"]
     networks:
       - vehicle-core-network
@@ -27,6 +36,14 @@ services:
     image: ${APP_IMAGE}
     container_name: vehicle-core-service
     env_file: [.env]
+    # Pass-through secrets — see the comment on `migrations` above.
+    environment:
+      - DATABASE_PASSWORD
+      - INTERNAL_API_TOKEN
+    # Survive an EC2 reboot / daemon restart without waiting for a redeploy.
+    # NOT set on `migrations`: that is a run-once job and any restart policy
+    # would make it loop forever.
+    restart: unless-stopped
     ports:
       - "8000:8000"
     depends_on:

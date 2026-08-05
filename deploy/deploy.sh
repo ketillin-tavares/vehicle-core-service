@@ -47,6 +47,15 @@ ENV_KEYS=(
   LOG_LEVEL
 )
 
+# Dump container state and recent output to stderr so the CD job's
+# StandardErrorContent tail explains WHY a deploy failed. Used on both failure
+# paths (compose up and health check). Never fails the script itself — it only
+# runs when something has already gone wrong. Prints app output only; no env.
+dump_diagnostics() {
+  docker compose -f docker-compose.prod.yml ps >&2 || true
+  docker compose -f docker-compose.prod.yml logs --tail=100 >&2 || true
+}
+
 cd "$APP_DIR"
 
 # 0. Preflight — runs BEFORE any secret is materialized so a broken host
@@ -171,7 +180,14 @@ for secret_key in DATABASE_PASSWORD INTERNAL_API_TOKEN; do
   fi
 done
 
-docker compose -f docker-compose.prod.yml up -d --remove-orphans
+# `up` exits non-zero if a dependency (migrations) fails, and set -e would
+# otherwise abort here with only compose's progress lines on stderr — the
+# container's own error would never be shown.
+if ! docker compose -f docker-compose.prod.yml up -d --remove-orphans; then
+  echo "[deploy] ERROR: compose up failed" >&2
+  dump_diagnostics
+  exit 1
+fi
 
 # 5. Health check — fail the SSM command (and the CD job) if not healthy.
 echo "[deploy] waiting for /health"
@@ -188,8 +204,5 @@ for _ in $(seq 1 30); do
 done
 
 echo "[deploy] ERROR: service did not become healthy" >&2
-docker compose -f docker-compose.prod.yml ps >&2
-# Container logs go to stderr too so the CD job's StandardErrorContent tail
-# shows WHY the app did not come up (env is never dumped — only app output).
-docker compose -f docker-compose.prod.yml logs --tail=100 >&2
+dump_diagnostics
 exit 1

@@ -74,7 +74,18 @@ else
   curl -fsSL "${COMPOSE_RELEASE_URL}/docker-compose-linux-x86_64" \
     -o "${workdir}/docker-compose-linux-x86_64"
   curl -fsSL "${COMPOSE_RELEASE_URL}/checksums.txt" -o "${workdir}/checksums.txt"
-  (cd "${workdir}" && grep ' docker-compose-linux-x86_64$' checksums.txt | sha256sum -c -)
+  # Docker publishes checksums.txt in sha256sum BINARY mode ("<hash> *<file>"),
+  # so the asset line is matched as a FIXED string including the leading " *".
+  # The empty-match guard matters: piping an empty match into `sha256sum -c -`
+  # fails with the misleading "no properly formatted SHA256 checksum lines
+  # found", which points at sha256sum instead of at this pattern.
+  checksum_line="$(grep -F ' *docker-compose-linux-x86_64' "${workdir}/checksums.txt" || true)"
+  if [ -z "${checksum_line}" ]; then
+    echo "ERROR: docker-compose-linux-x86_64 is not listed in checksums.txt for compose ${COMPOSE_VERSION}" >&2
+    echo "       (${COMPOSE_RELEASE_URL}/checksums.txt) — refusing to install an unverified binary" >&2
+    exit 1
+  fi
+  (cd "${workdir}" && printf '%s\n' "${checksum_line}" | sha256sum -c -)
   mv "${workdir}/docker-compose-linux-x86_64" /usr/local/lib/docker/cli-plugins/docker-compose
   rm -rf "${workdir}"
   chmod +x /usr/local/lib/docker/cli-plugins/docker-compose

@@ -9,6 +9,26 @@ variable "github_org" {
   type        = string
 }
 
+variable "github_owner_id" {
+  description = <<-EOT
+    GitHub numeric immutable identifier of the owner (user/org), used in the OIDC `sub` claim
+    (form `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:...`). ACCOUNT-SPECIFIC: the default is the
+    id of this project's GitHub account. Find it at https://api.github.com/users/<owner>, field `id`.
+  EOT
+  type        = string
+  default     = "93926603"
+}
+
+variable "github_repository_id" {
+  description = <<-EOT
+    GitHub numeric immutable identifier of the repository, used in the OIDC `sub` claim
+    (form `repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:...`). REPOSITORY-SPECIFIC: the default is
+    the id of vehicle-core-service. Find it at https://api.github.com/repos/<owner>/<repo>, field `id`.
+  EOT
+  type        = string
+  default     = "1289421350"
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the application host."
   type        = string

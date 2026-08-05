@@ -17,6 +17,18 @@ variable "github_org" {
   type        = string
 }
 
+variable "github_owner_id" {
+  description = "GitHub numeric immutable id of the owner, used in the OIDC `sub` claim. Defaults to this project's account; override only if the repository moves. See https://api.github.com/users/<owner>."
+  type        = string
+  default     = "93926603"
+}
+
+variable "github_repository_id" {
+  description = "GitHub numeric immutable id of the vehicle-core-service repository, used in the OIDC `sub` claim. See https://api.github.com/repos/<owner>/<repo>."
+  type        = string
+  default     = "1289421350"
+}
+
 variable "aws_region" {
   description = "AWS region for all resources."
   type        = string
@@ -32,9 +44,11 @@ variable "instance_type" {
 module "stack" {
   source = "../stack"
 
-  github_org    = var.github_org
-  aws_region    = var.aws_region
-  instance_type = var.instance_type
+  github_org           = var.github_org
+  github_owner_id      = var.github_owner_id
+  github_repository_id = var.github_repository_id
+  aws_region           = var.aws_region
+  instance_type        = var.instance_type
 }
 
 output "instance_id" {

@@ -10,6 +10,17 @@ data "aws_region" "current" {}
 
 locals {
   github_repository = "${var.github_org}/${local.service_name}"
+
+  # Two exact forms of the OIDC `sub` claim, both pinned in the trust policy.
+  #
+  # GitHub currently emits the IMMUTABLE-IDENTIFIER form: owner and repository
+  # names each carry an `@<numeric id>` suffix (confirmed via CloudTrail — the
+  # `userName` of an AssumeRoleWithWebIdentity event IS the `sub` claim). The
+  # plain-name form is kept so the deploy does not break if the emitted format
+  # changes back. Both are exact strings under StringEquals (arrays are
+  # evaluated as OR), so the trust boundary is unchanged — no wildcards.
+  github_subject_by_name = "repo:${local.github_repository}:ref:refs/heads/main"
+  github_subject_by_id   = "repo:${var.github_org}@${var.github_owner_id}/${local.service_name}@${var.github_repository_id}:ref:refs/heads/main"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -40,7 +51,10 @@ resource "aws_iam_role" "deploy" {
         Condition = {
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-            "token.actions.githubusercontent.com:sub" = "repo:${local.github_repository}:ref:refs/heads/main"
+            "token.actions.githubusercontent.com:sub" = [
+              local.github_subject_by_name,
+              local.github_subject_by_id,
+            ]
           }
         }
       }

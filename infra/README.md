@@ -44,8 +44,11 @@ local em [`infra/local/README.md`](./local/README.md).
   `latest`), `force_delete`, política de ciclo de vida mantendo as últimas 10 imagens.
 - **Instance profile IAM:** `AmazonSSMManagedInstanceCore` + leitura do segredo master do RDS +
   pull no repositório ECR da aplicação (nenhuma credencial de registry em lugar nenhum).
-- **Provider OIDC do GitHub + role de deploy** (`vehicle-core-service-deploy`): trust fixado em
-  `repo:<org>/vehicle-core-service:ref:refs/heads/main` (`aud`/`sub` exatos, sem wildcard);
+- **Provider OIDC do GitHub + role de deploy** (`vehicle-core-service-deploy`): trust fixado nas
+  **duas formas exatas** do `sub` — `repo:<org>/vehicle-core-service:ref:refs/heads/main` e
+  `repo:<org>@<owner_id>/vehicle-core-service@<repo_id>:ref:refs/heads/main` (`aud`/`sub` exatos,
+  sem wildcard; ver
+  [OIDC do GitHub Actions: o `sub` real usa identificadores imutáveis](#oidc-do-github-actions-o-sub-real-usa-identificadores-imutáveis-id));
   política permite `ssm:SendCommand` (documento `AWS-RunShellScript`, instância filtrada por tag),
   `ssm:GetCommandInvocation`, `ec2:DescribeInstances` e autenticação/push no único repositório ECR.
 - **KMS CMKs dedicadas** (rotação habilitada, ~US$ 1/mês cada):
@@ -200,6 +203,9 @@ export TF_WORKSPACE=vehicle-core-infra
    - Ambiente: `TFC_AWS_PROVIDER_AUTH=true` e
      `TFC_AWS_RUN_ROLE_ARN=<ARN da role vehicle-core-infra-tfc>`.
    - Terraform: `github_org` (obrigatória), opcionalmente `aws_region` / `instance_type`.
+     `github_owner_id` e `github_repository_id` já vêm com default igual aos ids reais deste
+     repositório — só precisam ser definidas em um fork (ver
+     [OIDC do GitHub Actions: o `sub` real usa identificadores imutáveis](#oidc-do-github-actions-o-sub-real-usa-identificadores-imutáveis-id)).
    - **Nunca** defina `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` no workspace — credenciais
      estáticas conflitam com a autenticação dinâmica.
 5. Variáveis de ambiente para o `terraform init` em `infra/main` (a CI também as define):
@@ -366,6 +372,55 @@ Este projeto já foi mordido por isso **duas vezes**, com a mesma causa raiz:
 
 O detalhamento completo está no callout da seção
 [Recursos provisionados](#recursos-provisionados-módulo-stack).
+
+### OIDC do GitHub Actions: o `sub` real usa identificadores imutáveis (`@<id>`)
+
+**Sintoma.** O job de deploy falha em `aws-actions/configure-aws-credentials` com
+`Not authorized to perform sts:AssumeRoleWithWebIdentity`, embora **tudo o que é visível esteja
+correto**: `AWS_ROLE_ARN` aponta para a role certa, o workflow roda na `main`, `permissions:
+id-token: write` está declarado e o `aud` é `sts.amazonaws.com`. A mensagem de erro **nunca mostra o
+`sub` que o token realmente trouxe**, então a comparação com a trust policy é impossível pelo log.
+
+**Diagnóstico.** CloudTrail → *Event history* → *Event name* = `AssumeRoleWithWebIdentity` → abra o
+evento negado. O campo **`userIdentity.userName` de um `WebIdentityUser` é o `sub` verbatim** (o
+`principalId` também o contém, após `<provider-arn>:sts.amazonaws.com:`). Foi assim que o valor real
+apareceu neste projeto:
+
+```
+"userName": "repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main"
+```
+
+**Causa raiz.** O GitHub está emitindo o `sub` na **forma de identificadores imutáveis**: o nome do
+owner e o do repositório recebem cada um o sufixo `@<id numérico>`
+(`repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main`). A trust policy fixava apenas
+`repo:<owner>/<repo>:ref:refs/heads/main` — string diferente, `StringEquals` falha, `AccessDenied`.
+
+**Correção (já aplicada).** `StringEquals` aceita **array**, avaliado como OR entre valores exatos.
+A condição fixa **as duas formas**, sem wildcard:
+
+```hcl
+"token.actions.githubusercontent.com:sub" = [
+  local.github_subject_by_name, # repo:<owner>/<repo>:ref:refs/heads/main
+  local.github_subject_by_id,   # repo:<owner>@<owner_id>/<repo>@<repo_id>:ref:refs/heads/main
+]
+```
+
+A forma com id é a que o GitHub manda hoje; a forma com nome fica como rede de segurança caso o
+formato emitido volte atrás. **Nada de `StringLike`** aqui: um padrão como `repo:<owner>*/…` casaria
+também com uma conta `<owner>-evil` registrada por um terceiro. Como os dois valores
+são strings exatas, a fronteira de confiança continua idêntica à original.
+
+Os ids entram por `github_owner_id` e `github_repository_id` (`infra/stack/variables.tf` e
+`infra/main/main.tf`). Eles são específicos da conta/repositório; leia o campo `id` de
+`https://api.github.com/users/<owner>` e de `https://api.github.com/repos/<owner>/<repo>`.
+
+> ⚠️ **O `vehicle-sales-service` vai bater exatamente no mesmo problema** quando ganhar a própria
+> role OIDC — mesmo owner id, porém **repository id diferente**. Já crie a trust policy de lá com as
+> duas formas e o `github_repository_id` do repositório dele.
+
+> **Nota de validação.** O Floci não valida nada disso: lá `create_github_oidc = false` (o emulador
+> não cria OIDC providers) e ele tampouco avalia autorização IAM. A única prova é o run real do
+> `cd.yml` assumindo a role.
 
 ### O caminho de `destroy` nunca foi exercitado contra a AWS real
 

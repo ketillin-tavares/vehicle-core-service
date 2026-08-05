@@ -24,10 +24,16 @@ services:
     # deploy.sh shell environment. These two are NOT in .env on purpose —
     # Compose interpolates env_file values, so a `$` or `{` in the
     # RDS-generated password would be silently truncated or fail the whole
-    # deploy with `Invalid template`. alembic needs the password; it has no
-    # use for INTERNAL_API_TOKEN, so it does not get it.
+    # deploy with `Invalid template`.
+    # INTERNAL_API_TOKEN is required here even though alembic never uses it:
+    # alembic/env.py calls get_settings() at import time to build
+    # sqlalchemy.url, which constructs the whole Settings object, and
+    # SecuritySettings.internal_api_token is a required field with no default.
+    # Without it the container dies with a pydantic ValidationError before it
+    # ever reaches the database.
     environment:
       - DATABASE_PASSWORD
+      - INTERNAL_API_TOKEN
     command: ["alembic", "upgrade", "head"]
     networks:
       - vehicle-core-network

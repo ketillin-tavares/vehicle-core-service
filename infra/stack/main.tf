@@ -74,6 +74,28 @@ resource "aws_iam_role_policy_attachment" "instance_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# AmazonSSMManagedInstanceCore grants ssm:GetParameter* on Resource "*", so
+# without this the instance could read the PEER service's plain-String
+# db_config parameters (host/user/db name/secret ARN). An explicit Deny wins
+# over any Allow.
+#
+# Scoped to the peer's prefix rather than written as a NotResource allow-list:
+# NotResource would also deny the SSM agent's own reads under /aws/service/*
+# and break the managed-instance channel.
+resource "aws_iam_role_policy" "instance_deny_peer_params" {
+  name = "${local.service_name}-deny-peer-ssm"
+  role = aws_iam_role.instance.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid      = "DenyPeerServiceParameters"
+      Effect   = "Deny"
+      Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+      Resource = "arn:aws:ssm:*:*:parameter/${local.peer_service_name}/*"
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "instance" {
   name = "${local.service_name}-instance-profile"
   role = aws_iam_role.instance.name

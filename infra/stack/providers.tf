@@ -4,6 +4,10 @@ locals {
 
   service_name = "vehicle-core-service"
 
+  # The OTHER service in the platform. Used only to deny this instance role
+  # read access to that service's SSM tree (see main.tf).
+  peer_service_name = "vehicle-sales-service"
+
   # Applied account-wide via default_tags AND explicitly on every resource
   # that is the target of a tag-based (ABAC) IAM condition — default_tags
   # has a history of not propagating to some resource types (notably

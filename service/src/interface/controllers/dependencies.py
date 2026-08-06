@@ -15,6 +15,9 @@ def _assert_token(received: str | None, expected: str) -> None:
     """
     Compara o token recebido com o esperado em tempo constante.
 
+    A comparação é feita sobre os bytes UTF-8 dos tokens, pois secrets.compare_digest
+    lança TypeError para strings com caracteres fora do intervalo ASCII.
+
     Args:
         received: Token enviado no header da requisição.
         expected: Token configurado no serviço.
@@ -22,7 +25,7 @@ def _assert_token(received: str | None, expected: str) -> None:
     Raises:
         HTTPException: Com status 401 se o token estiver ausente ou for divergente.
     """
-    if received is None or not secrets.compare_digest(received, expected):
+    if received is None or not secrets.compare_digest(received.encode("utf-8"), expected.encode("utf-8")):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=UNAUTHORIZED_DETAIL)
 
 

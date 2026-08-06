@@ -37,6 +37,14 @@ class TestVerifyInternalToken:
             await dependencies.verify_internal_token(x_internal_token="wrong-token")
         assert exc_info.value.status_code == 401
 
+    @pytest.mark.asyncio
+    async def test_non_ascii_token_raises_401_not_500(self) -> None:
+        """Test that a non-ASCII X-Internal-Token header raises a clean 401 instead of an unhandled TypeError."""
+        # Arrange / Act / Assert
+        with pytest.raises(HTTPException) as exc_info:
+            await dependencies.verify_internal_token(x_internal_token="ç")
+        assert exc_info.value.status_code == 401
+
 
 class TestGetSalesSync:
     """Tests for the get_sales_sync dependency provider."""

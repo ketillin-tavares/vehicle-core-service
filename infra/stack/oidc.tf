@@ -32,6 +32,18 @@ resource "aws_iam_openid_connect_provider" "github" {
     "6938fd4d98bab03faadb97b34396831e3780aea1",
     "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
   ]
+
+  # SHARED, ACCOUNT-WIDE RESOURCE. AWS allows exactly one OIDC provider per
+  # URL per account, so vehicle-sales-service does NOT create its own — its
+  # stack reads this one with a data source and its deploy role trusts it.
+  # Destroying it here would silently break that service's CD; prevent_destroy
+  # turns that into a loud plan-time error naming this resource.
+  # Tearing the whole account down therefore requires a DELIBERATE
+  # `terraform state rm aws_iam_openid_connect_provider.github` (after the
+  # sales stack is gone), or temporarily removing this block.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Deploy role: assumable ONLY by this repo's main branch (security item 2 —

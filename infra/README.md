@@ -43,7 +43,13 @@ local em [`infra/local/README.md`](./local/README.md).
 - **Repositório ECR** `vehicle-core-service`: scan automático no push, tags mutáveis (permite mover
   `latest`), `force_delete`, política de ciclo de vida mantendo as últimas 10 imagens.
 - **Instance profile IAM:** `AmazonSSMManagedInstanceCore` + leitura do segredo master do RDS +
-  pull no repositório ECR da aplicação (nenhuma credencial de registry em lugar nenhum).
+  pull no repositório ECR da aplicação (nenhuma credencial de registry em lugar nenhum) **+ um
+  `Deny` explícito** em `ssm:GetParameter`/`GetParameters`/`GetParametersByPath` sobre
+  `parameter/vehicle-sales-service/*`. Necessário porque `AmazonSSMManagedInstanceCore` libera
+  `ssm:GetParameter*` em `Resource: "*"` — sem o `Deny`, a instância do Core poderia ler os
+  parâmetros `String` (não segredos, mas ainda assim de outro serviço) do `vehicle-sales-service`. Um
+  `Deny` explícito sempre vence um `Allow` no mesmo principal. O Sales tem a policy simétrica negando
+  o prefixo do Core (`infra/stack/main.tf`, `aws_iam_role_policy.instance_deny_peer_params`).
 - **Provider OIDC do GitHub + role de deploy** (`vehicle-core-service-deploy`): trust fixado nas
   **duas formas exatas** do `sub` — `repo:<org>/vehicle-core-service:ref:refs/heads/main` e
   `repo:<org>@<owner_id>/vehicle-core-service@<repo_id>:ref:refs/heads/main` (`aud`/`sub` exatos,
@@ -51,6 +57,16 @@ local em [`infra/local/README.md`](./local/README.md).
   [OIDC do GitHub Actions: o `sub` real usa identificadores imutáveis](#oidc-do-github-actions-o-sub-real-usa-identificadores-imutáveis-id));
   política permite `ssm:SendCommand` (documento `AWS-RunShellScript`, instância filtrada por tag),
   `ssm:GetCommandInvocation`, `ec2:DescribeInstances` e autenticação/push no único repositório ECR.
+
+  > **O provider agora é um recurso compartilhado, de escopo de conta.** Desde que o
+  > `vehicle-sales-service` ganhou stack própria, ele **lê** este provider via data source em vez de
+  > criar o seu — a AWS só permite um provider por URL por conta. Por isso o recurso carrega
+  > `lifecycle { prevent_destroy = true }`: destruir esta stack antes da stack do Sales quebraria o
+  > deploy dela também. Derrubar a conta inteira exige primeiro destruir o Sales e só depois um
+  > `terraform state rm aws_iam_openid_connect_provider.github` deliberado aqui (ou remover o bloco
+  > `lifecycle` temporariamente e reaplicar). Detalhes completos — as duas flags do lado do Sales, a
+  > ordem de apply obrigatória (Core primeiro) e o erro de `plan` quando ela é invertida — estão em
+  > `vehicle-sales-service/infra/README.md`.
 - **KMS CMKs dedicadas** (rotação habilitada, ~US$ 1/mês cada):
   - `alias/vehicle-core-service-ssm`: cifra os parâmetros `SecureString` do SSM deste serviço em
     vez da chave padrão da conta (`alias/aws/ssm`). A política da chave concede `kms:Decrypt`
@@ -414,9 +430,12 @@ Os ids entram por `github_owner_id` e `github_repository_id` (`infra/stack/varia
 `infra/main/main.tf`). Eles são específicos da conta/repositório; leia o campo `id` de
 `https://api.github.com/users/<owner>` e de `https://api.github.com/repos/<owner>/<repo>`.
 
-> ⚠️ **O `vehicle-sales-service` vai bater exatamente no mesmo problema** quando ganhar a própria
-> role OIDC — mesmo owner id, porém **repository id diferente**. Já crie a trust policy de lá com as
-> duas formas e o `github_repository_id` do repositório dele.
+> ⚠️ **O `vehicle-sales-service` já bateu exatamente neste problema** ao ganhar a própria role OIDC —
+> mesmo owner id, porém **repository id diferente**. A trust policy de lá usa as mesmas duas formas
+> com o `github_repository_id` do repositório dele; diferente daqui, porém, ele não é dono do
+> provider — lê o deste repositório via data source (ver o callout sobre `prevent_destroy` em
+> [Recursos provisionados](#recursos-provisionados-módulo-stack)). Detalhes completos em
+> `vehicle-sales-service/infra/README.md`.
 
 > **Nota de validação.** O Floci não valida nada disso: lá `create_github_oidc = false` (o emulador
 > não cria OIDC providers) e ele tampouco avalia autorização IAM. A única prova é o run real do
@@ -452,12 +471,21 @@ apenas os nomes das chaves.
 | `DATABASE_USER` | Usuário de conexão com o banco | `vehicle_core_user` | Terraform (usuário master do RDS) |
 | `DATABASE_PASSWORD` | Senha de conexão com o banco | *(gerada, não versionada)* | Secrets Manager, referenciado pela SSM `DATABASE_PASSWORD_SECRET_ARN`; materializada em runtime pelo `deploy.sh` |
 | `DATABASE_NAME` | Nome do banco de dados | `vehicle_core` | Terraform (nome do banco no RDS) |
-| `SALES_SERVICE_BASE_URL` | URL base do `vehicle-sales-service` | `http://vehicle-sales-service:8000` | SSM `SecureString` (`CHANGE_ME` até ser definida manualmente) |
+| `SALES_SERVICE_BASE_URL` | URL base do `vehicle-sales-service` | `http://<ip-privado-do-sales>:8000` | SSM `SecureString` (`CHANGE_ME` até ser definida manualmente — use o IP privado da instância do Sales, não um endpoint público) |
 | `SALES_SERVICE_TIMEOUT_SECONDS` | Timeout, em segundos, das chamadas HTTP ao serviço de vendas | `5.0` | SSM `SecureString` |
 | `INTERNAL_API_TOKEN` | Token compartilhado exigido no header `X-Internal-Token` das rotas internas entre serviços | *(string aleatória com 32+ bytes)* | SSM `SecureString` |
 | `SERVICE_NAME` | Nome do serviço usado em logs e no health check | `vehicle-core-service` | SSM `SecureString` |
 | `DEBUG` | Habilita modo debug (echo de SQL, logs verbosos) | `false` | SSM `SecureString` |
 | `LOG_LEVEL` | Nível mínimo de log | `INFO` | SSM `SecureString` |
+
+> **Por que IP privado, e não o endpoint público.** As duas instâncias EC2 (Core e Sales) vivem na
+> mesma VPC default e na mesma subnet, então se alcançam diretamente por IP privado, sem sair para a
+> internet. As chamadas internas carregam `INTERNAL_API_TOKEN` em texto puro no header
+> `X-Internal-Token` (não há TLS entre os serviços neste MVP); apontar `SALES_SERVICE_BASE_URL` para
+> o Elastic IP público mandaria esse token pela internet aberta a cada chamada. O trade-off — um IP
+> privado muda se a instância for recriada, o que passa a exigir atualizar o parâmetro dos dois
+> lados a cada substituição — está detalhado em
+> `vehicle-sales-service/infra/README.md#urls-entre-serviços-devem-usar-ip-privado-nunca-o-endpoint-público`.
 
 As variáveis marcadas como SSM `SecureString` nascem com o placeholder `CHANGE_ME` (definido pelo
 Terraform) e **precisam ser configuradas fora do Terraform**, uma vez por ambiente:

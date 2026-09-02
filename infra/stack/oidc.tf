@@ -41,9 +41,13 @@ resource "aws_iam_openid_connect_provider" "github" {
   # Tearing the whole account down therefore requires a DELIBERATE
   # `terraform state rm aws_iam_openid_connect_provider.github` (after the
   # sales stack is gone), or temporarily removing this block.
-  lifecycle {
-    prevent_destroy = true
-  }
+  #
+  # >>> TEMPORARILY DISABLED FOR A FULL-ACCOUNT TEARDOWN <<<
+  # The vehicle-sales-service stack must already be destroyed. RESTORE THIS
+  # BLOCK before the next apply, otherwise the guard is gone for good.
+  # lifecycle {
+  #   prevent_destroy = true
+  # }
 }
 
 # Deploy role: assumable ONLY by this repo's main branch (security item 2 —
